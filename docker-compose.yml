@@ -1,0 +1,191 @@
+services:
+  # ------------------------------------------------------------------------------
+  # Database Service (MariaDB)
+  # ------------------------------------------------------------------------------
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-f406f2b5236376a59b41d19b6026320a}
+      MYSQL_DATABASE: ${DB_DATABASE:-tutor_hub}
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h localhost --silent || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ------------------------------------------------------------------------------
+  # Adminer Database Interface
+  # ------------------------------------------------------------------------------
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ------------------------------------------------------------------------------
+  # Tutor Hub Web Application
+  # ------------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: mysql://root:${DB_PASSWORD:-f406f2b5236376a59b41d19b6026320a}@db:3306/${DB_DATABASE:-tutor_hub}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-bd93909625e1eb3879cd9a4441bb262f}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      JITSI_DOMAIN: ${JITSI_DOMAIN:-localhost:8443}
+      JITSI_APP_ID: ${JITSI_APP_ID:-tutor_hub}
+      JITSI_JWT_SECRET: ${JITSI_JWT_SECRET:-028aff0657a9832855d3da16eb869d77}
+      SMTP_HOST: ${SMTP_HOST:-smtp.mailtrap.io}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-your_smtp_user}
+      SMTP_PASS: ${SMTP_PASS:-your_smtp_password}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-"Tutor Hub Classroom"}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
+      S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      jitsi-web:
+        condition: service_started
+    volumes:
+      - app_uploads:/app/public/uploads
+
+  # ------------------------------------------------------------------------------
+  # Jitsi XMPP Server (Prosody)
+  # ------------------------------------------------------------------------------
+  prosody:
+    image: jitsi/prosody:${JITSI_IMAGE_VERSION:-stable}
+    restart: unless-stopped
+    networks:
+      meet.jitsi:
+        aliases:
+          - xmpp.meet.jitsi
+    volumes:
+      - ${JITSI_CONFIG_DIR:-./jitsi-meet-cfg}/prosody/config:/config:Z
+      - ${JITSI_CONFIG_DIR:-./jitsi-meet-cfg}/prosody/prosody-plugins-custom:/prosody-plugins-custom:Z
+    environment:
+      - AUTH_TYPE=jwt
+      - JWT_APP_ID=${JITSI_APP_ID:-tutor_hub}
+      - JWT_APP_SECRET=${JITSI_JWT_SECRET:-028aff0657a9832855d3da16eb869d77}
+      - JWT_ACCEPTED_ISSUERS=${JITSI_APP_ID:-tutor_hub}
+      - JWT_ACCEPTED_AUDIENCES=${JITSI_APP_ID:-tutor_hub}
+      - PUBLIC_URL=https://${JITSI_DOMAIN:-localhost:8443}
+      - ENABLE_AUTH=1
+      - ENABLE_GUESTS=1
+      - XMPP_DOMAIN=meet.jitsi
+      - XMPP_AUTH_DOMAIN=auth.meet.jitsi
+      - XMPP_MUC_DOMAIN=muc.meet.jitsi
+      - XMPP_INTERNAL_MUC_DOMAIN=internal-muc.meet.jitsi
+      - XMPP_RECORDER_DOMAIN=recorder.meet.jitsi
+      - JICOFO_COMPONENT_SECRET=${JICOFO_COMPONENT_SECRET:-d89ebc49111e9102918446209e1a0827}
+      - JICOFO_AUTH_USER=focus
+      - JICOFO_AUTH_PASSWORD=${JICOFO_AUTH_PASSWORD:-91731c366a5eb40c26e14c11f6957d84}
+      - JVB_AUTH_USER=jvb
+      - JVB_AUTH_PASSWORD=${JVB_AUTH_PASSWORD:-cd58768def4681b03737bddad4fda314}
+
+  # ------------------------------------------------------------------------------
+  # Jitsi Conference Focus (Jicofo)
+  # ------------------------------------------------------------------------------
+  jicofo:
+    image: jitsi/jicofo:${JITSI_IMAGE_VERSION:-stable}
+    restart: unless-stopped
+    networks:
+      meet.jitsi:
+    volumes:
+      - ${JITSI_CONFIG_DIR:-./jitsi-meet-cfg}/jicofo:/config:Z
+    environment:
+      - ENABLE_AUTH=1
+      - AUTH_TYPE=jwt
+      - JICOFO_COMPONENT_SECRET=${JICOFO_COMPONENT_SECRET:-d89ebc49111e9102918446209e1a0827}
+      - JICOFO_AUTH_USER=focus
+      - JICOFO_AUTH_PASSWORD=${JICOFO_AUTH_PASSWORD:-91731c366a5eb40c26e14c11f6957d84}
+      - XMPP_DOMAIN=meet.jitsi
+      - XMPP_AUTH_DOMAIN=auth.meet.jitsi
+      - XMPP_MUC_DOMAIN=muc.meet.jitsi
+      - XMPP_INTERNAL_MUC_DOMAIN=internal-muc.meet.jitsi
+      - XMPP_SERVER=xmpp.meet.jitsi
+    depends_on:
+      - prosody
+
+  # ------------------------------------------------------------------------------
+  # Jitsi Videobridge (JVB)
+  # ------------------------------------------------------------------------------
+  jvb:
+    image: jitsi/jvb:${JITSI_IMAGE_VERSION:-stable}
+    restart: unless-stopped
+    ports:
+      - "10000:10000/udp"
+    networks:
+      meet.jitsi:
+    volumes:
+      - ${JITSI_CONFIG_DIR:-./jitsi-meet-cfg}/jvb:/config:Z
+    environment:
+      - JVB_PORT=10000
+      - JVB_AUTH_USER=jvb
+      - JVB_AUTH_PASSWORD=${JVB_AUTH_PASSWORD:-cd58768def4681b03737bddad4fda314}
+      - XMPP_DOMAIN=meet.jitsi
+      - XMPP_AUTH_DOMAIN=auth.meet.jitsi
+      - XMPP_INTERNAL_MUC_DOMAIN=internal-muc.meet.jitsi
+      - XMPP_SERVER=xmpp.meet.jitsi
+      - PUBLIC_URL=https://${JITSI_DOMAIN:-localhost:8443}
+      - JVB_ADVERTISE_IPS=${JVB_ADVERTISE_IPS:-}
+    depends_on:
+      - prosody
+
+  # ------------------------------------------------------------------------------
+  # Jitsi Nginx Frontend (Web)
+  # ------------------------------------------------------------------------------
+  jitsi-web:
+    image: jitsi/web:${JITSI_IMAGE_VERSION:-stable}
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+      - "8443:443"
+    networks:
+      meet.jitsi:
+        aliases:
+          - web.meet.jitsi
+    volumes:
+      - ${JITSI_CONFIG_DIR:-./jitsi-meet-cfg}/web:/config:Z
+      - ${JITSI_CONFIG_DIR:-./jitsi-meet-cfg}/web/crontabs:/var/spool/cron/crontabs:Z
+      - ${JITSI_CONFIG_DIR:-./jitsi-meet-cfg}/transcripts:/usr/share/jitsi-meet/transcripts:Z
+    environment:
+      - PUBLIC_URL=https://${JITSI_DOMAIN:-localhost:8443}
+      - ENABLE_AUTH=1
+      - ENABLE_GUESTS=1
+      - AUTH_TYPE=jwt
+      - DISABLE_HTTPS=${DISABLE_HTTPS:-0}
+      - ENABLE_HTTP_REDIRECT=0
+      - XMPP_DOMAIN=meet.jitsi
+      - XMPP_AUTH_DOMAIN=auth.meet.jitsi
+      - XMPP_BOSH_URL_BASE=http://xmpp.meet.jitsi:5280
+      - XMPP_MUC_DOMAIN=muc.meet.jitsi
+      - XMPP_INTERNAL_MUC_DOMAIN=internal-muc.meet.jitsi
+      - XMPP_GUEST_DOMAIN=guest.meet.jitsi
+      - XMPP_RECORDER_DOMAIN=recorder.meet.jitsi
+    depends_on:
+      - prosody
+
+networks:
+  meet.jitsi:
+
+volumes:
+  db_data:
+  app_uploads:
