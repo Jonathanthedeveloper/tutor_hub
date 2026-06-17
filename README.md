@@ -14,7 +14,6 @@ Tutor Hub is a virtual classroom scheduling and learning management platform bui
 - **State Management & Data Fetching**: TanStack Query (React Query)
 - **Authentication**: [Better Auth](https://www.better-auth.com/)
 - **Database ORM**: [Drizzle ORM](https://orm.drizzle.team/) with MariaDB
-- **Interactive Calendar**: `react-big-calendar` integrated with OKLCH theme variables
 - **Video Conferencing**: Self-hosted Jitsi Meet cluster (Prosody, Jicofo, JVB, Nginx Web wrapper) running in Docker
 
 ---
